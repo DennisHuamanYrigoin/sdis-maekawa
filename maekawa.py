@@ -8,13 +8,13 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
     clock = 0
     msgs_sent_count = 0
     
-    # Estado Arbitro
+    # Arbitro
     voted_for = None
     voted_for_ts = float('inf')
     request_queue = []
     sent_inquire_to = None
     
-    # Estado Solicitante
+    # Solicitante
     received_votes = set()
     needed_votes = len(voting_set)
     has_requested = False
@@ -30,11 +30,10 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
         has_requested = True
         req_start_time = time.perf_counter()
         
-        # --- ENVÍO PARALELO (Request) ---
+        # REQUEST (Multicast al Voting Set)
         time.sleep(NETWORK_DELAY) 
         for member in voting_set:
             queues[member].put((REQUEST, my_ts, node_id))
-            # CORRECCIÓN: Solo contamos mensajes de RED (no a uno mismo)
             if member != node_id:
                 msgs_sent_count += 1
 
@@ -50,10 +49,10 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
         msg_type, src_ts, src_id = msg
         clock = max(clock, src_ts) + 1
 
-        # --- LÓGICA DE ÁRBITRO ---
+        # Lógica del Arbitro
         if msg_type == REQUEST:
             if voted_for is None:
-                # Conceder Voto
+                # Voto
                 voted_for = src_id
                 voted_for_ts = src_ts
                 time.sleep(NETWORK_DELAY)
@@ -61,18 +60,21 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                 if src_id != node_id: msgs_sent_count += 1
             else:
                 heapq.heappush(request_queue, (src_ts, src_id))
-                if use_inquire_optimization: # HEAVY
+                
+                if use_inquire_optimization: # HEAVY DEMAND
                     curr = (voted_for_ts, voted_for)
                     new = (src_ts, src_id)
+                    # Si el nuevo tiene prioridad, recuperar el voto
                     if new < curr and sent_inquire_to != voted_for:
                         time.sleep(NETWORK_DELAY)
                         queues[voted_for].put((INQUIRE, clock, node_id))
                         if voted_for != node_id: msgs_sent_count += 1
                         sent_inquire_to = voted_for
                     else:
+                        # En Heavy sí enviamos FAILED
                         queues[src_id].put((FAILED, clock, node_id)) 
                         if src_id != node_id: msgs_sent_count += 1
-                else: # LIGHT (Deadlock prone)
+                else: # LIGHT DEMAND
                     pass
 
         elif msg_type == RELEASE:
@@ -102,7 +104,7 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     queues[next_node].put((LOCKED, clock, node_id))
                     if next_node != node_id: msgs_sent_count += 1
 
-        # --- LÓGICA DE SOLICITANTE ---
+        # Lógica del Solicitante
         if has_requested:
             if msg_type == LOCKED:
                 received_votes.add(src_id)
@@ -121,7 +123,7 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     is_in_cs = False
                     received_votes.clear()
                     
-                    # --- RELEASE PARALELO ---
+                    # RELEASE (Multicast al Voting Set)
                     time.sleep(NETWORK_DELAY)
                     for member in voting_set:
                         queues[member].put((RELEASE, clock, node_id))

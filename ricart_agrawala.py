@@ -19,8 +19,7 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
         
         req_start_time = time.perf_counter()
         
-        # --- ENVÍO PARALELO (BROADCAST) ---
-        # Simulamos que el mensaje tarda T en llegar a todos simultáneamente
+        # --- (BROADCAST) ---
         time.sleep(NETWORK_DELAY) 
         for i in range(total_nodes):
             if i != node_id:
@@ -43,7 +42,6 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
                 if requesting and (my_priority < other_priority):
                     deferred_nodes.append(src_id)
                 else:
-                    # Respuesta Unicast: Se mantiene el sleep individual
                     time.sleep(NETWORK_DELAY)
                     queues[src_id].put((REPLY, clock, node_id))
                     msgs_sent_count += 1
@@ -64,17 +62,14 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
         requesting = False
         
         # 4. SALIDA (REPLY A DIFERIDOS)
-        # Aquí ocurre el Sync Delay. 
-        # Enviamos todas las respuestas pendientes en paralelo.
         if deferred_nodes:
-            time.sleep(NETWORK_DELAY) # T (Sync Delay = T)
+            time.sleep(NETWORK_DELAY)
             for target_id in deferred_nodes:
                 queues[target_id].put((REPLY, clock, node_id))
                 msgs_sent_count += 1
             
         stats_queue.put(('DONE', node_id))
 
-    # Loop pasivo
     while True:
         try:
             msg = my_queue.get(timeout=0.5)

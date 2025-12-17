@@ -1,4 +1,3 @@
-# main.py
 import multiprocessing
 import time
 import math
@@ -23,7 +22,6 @@ def print_detailed_metrics(algo_name, collected_stats, N, k_active, E):
         elif tag == 'CS_EXIT': exits.append(val)
         elif tag == 'RESPONSE_TIME': response_times.append(val)
 
-    # Métricas Reales
     avg_msgs = total_msgs / k_active if k_active > 0 else 0
     avg_resp = sum(response_times) / len(response_times) if response_times else 0
     
@@ -37,31 +35,30 @@ def print_detailed_metrics(algo_name, collected_stats, N, k_active, E):
                 if delay > 0: sync_delays.append(delay)
     avg_sd = sum(sync_delays) / len(sync_delays) if sync_delays else 0
     throughput = 1 / (avg_sd + E) if (avg_sd + E) > 0 else 0
-
-    # Cálculos Teóricos Ajustados
+    
     theory_avg = 0
     
     if "Ricart" in algo_name:
         theory_avg = 2 * (N - 1)
     else:
-        # Calcular tamaño REAL promedio del quorum (menos self)
+        # Calcular K real basado en la topología de Grid generada
         voting_sets = generate_maekawa_voting_sets(N)
-        k_sizes = [len(v_set) - 1 for v_set in voting_sets.values()] # Restamos self
-        K_real_avg = sum(k_sizes) / len(k_sizes)
+        k_sizes_remote = [len(v_set) - 1 for v_set in voting_sets.values()]
+        K_remote_avg = sum(k_sizes_remote) / len(k_sizes_remote)
         
         if "Light" in algo_name:
-            # Request + Locked + Release = 3 mensajes por cada miembro remoto
-            theory_avg = 3 * K_real_avg
-        else: # Heavy
-            # Cota superior estimada con Inquire/Relinquish
-            theory_avg = 5 * K_real_avg
+            # Flujo: Request(K) + Locked(K) + Release(K)
+            theory_avg = 3 * K_remote_avg
+        else: # Heavy Demand
+            # Flujo base + Inquire/Relinquish/Failed
+            theory_avg = 5 * K_remote_avg
 
     theory_total = theory_avg * k_active
 
     print("\n" + "="*70)
     print(f" RESULTADOS MÉTRICAS: {algo_name}")
     print("="*70)
-    print(f"Configuración: N={N}, k={k_active}, E={E}s, T={NETWORK_DELAY}s")
+    print(f"Configuración: N={N}, k={k_active}, E={E}s, S(i) = {2*math.sqrt(N)-1:.2f}")
     print("-" * 70)
     print(f"[1] COMPLEJIDAD DE MENSAJES")
     print(f"    Total Sistema    : {total_msgs} (Teórico: ~{theory_total:.1f})")
@@ -70,11 +67,11 @@ def print_detailed_metrics(algo_name, collected_stats, N, k_active, E):
     print("-" * 70)
     print(f"[2] SYNCHRONIZATION DELAY (SD) : {avg_sd:.4f} s")
     print(f"[3] RESPONSE TIME PROMEDIO     : {avg_resp:.4f} s")
-    print(f"[4] SYSTEM THROUGHPUT          : {throughput:.4f} ops/s")
+    print(f"[4] SYSTEM THROUGHPUT          : {throughput:.4f}")
     print("="*70 + "\n")
 
 def run_simulation(algo_type, N, k_active, E):
-    print(f"\n>>> INICIANDO: {algo_type} <<<")
+    print(f"\n>>> En Ejecución: {algo_type} <<<")
     manager = multiprocessing.Manager()
     queues = [manager.Queue() for _ in range(N)]
     stats_queue = manager.Queue()
@@ -97,11 +94,9 @@ def run_simulation(algo_type, N, k_active, E):
             
             if is_active:
                 if "Light" in algo_type:
-                    # Light: Start=0 y Sin Optimizacion -> PROVOCA DEADLOCK
                     start_delay = 0 
                     use_opt = False
                 else:
-                    # Heavy: Start=0 Con Optimizacion -> HEAVY LOAD FUNCIONAL
                     start_delay = 0
                     use_opt = True
 
@@ -110,8 +105,7 @@ def run_simulation(algo_type, N, k_active, E):
 
     for p in processes: p.start()
     
-    # Timeout
-    TIMEOUT_LIMIT = (k_active * (E + (15 * NETWORK_DELAY))) + 45
+    TIMEOUT_LIMIT = (k_active * (E + (15 * NETWORK_DELAY))) + 45 # Timeout
     print(f"Esperando finalización (Timeout: {TIMEOUT_LIMIT:.1f}s)...")
 
     start_t = time.time()
@@ -122,10 +116,10 @@ def run_simulation(algo_type, N, k_active, E):
         if time.time() - start_t > TIMEOUT_LIMIT:
             print("\n" + "!"*60)
             if "Light" in algo_type:
-                print(" ERROR CRÍTICO: TIMEOUT ALCANZADO (DEADLOCK CONFIRMADO)")
-                print(" Maekawa Light se bloqueó por espera circular.")
+                print(" TIMEOUT ALCANZADO (DEADLOCK)")
+                print(" Maekawa Under Light se bloqueó por espera circular.")
             else:
-                print(" ERROR: TIMEOUT INESPERADO")
+                print(" ERROR: TIMEOUT ALCANZADO")
             print("!"*60 + "\n")
             deadlock_detected = True
             break
@@ -149,23 +143,13 @@ def run_simulation(algo_type, N, k_active, E):
         print_detailed_metrics(algo_type, collected_stats, N, k_active, E)
 
 def main():
-    print("=== Análisis de Algoritmos (Mensajes Netos) ===")
-    print(f"Network Delay Base (T): {NETWORK_DELAY} s")
-    
     try:
-        # Prueba ideal para ver los números exactos
-        print("Valores recomendados: N=4, k=2, E=0.1")
         N = int(input("Total Nodos (N): "))
         k = int(input(f"Solicitantes (k): "))
         E = float(input("Tiempo CS (s): "))
     except: return
 
-    scenarios = ["Ricart-Agrawala", "Maekawa (Heavy)"] 
-    # Quitamos Light de la lista automática porque sabemos que dará Deadlock con k=2/start=0
-    # Pero si quieres verlo fallar, añádelo:
-    print("\n¿Incluir Maekawa Light (Puede causar Deadlock)? (s/n)")
-    if input().lower() == 's':
-        scenarios.insert(1, "Maekawa (Light)")
+    scenarios = ["Ricart-Agrawala", "Maekawa (Light Demand)", "Maekawa (Heavy Demand)"] 
     
     for sc in scenarios:
         run_simulation(sc, N, k, E)

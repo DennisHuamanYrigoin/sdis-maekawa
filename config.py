@@ -1,7 +1,6 @@
-# config.py
 import math
 
-# --- Tipos de Mensajes ---
+# Tipos de Mensajes
 REQUEST = 'REQUEST'
 REPLY = 'REPLY'
 RELEASE = 'RELEASE'
@@ -10,13 +9,9 @@ FAILED = 'FAILED'
 INQUIRE = 'INQUIRE'
 RELINQUISH = 'RELINQUISH'
 
-# --- Configuración de Tiempos ---
-# T = 0.5 segundos. 
-# Esto hará visible la diferencia: RA=0.5s vs Maekawa=1.0s
-NETWORK_DELAY = 0.5 
+NETWORK_DELAY = 1
 
 def generate_maekawa_voting_sets(N):
-    """ Genera Quorums K ~ sqrt(N) """
     if N == 0: return {}
     k = int(math.ceil(math.sqrt(N)))
     voting_sets = {}
