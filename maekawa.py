@@ -1,0 +1,140 @@
+# maekawa.py
+import time
+import heapq
+from config import REQUEST, LOCKED, RELEASE, FAILED, INQUIRE, RELINQUISH, NETWORK_DELAY
+
+def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_delay, active_participant, use_inquire_optimization):
+    my_queue = queues[node_id]
+    clock = 0
+    msgs_sent_count = 0
+    
+    # Estado Arbitro
+    voted_for = None
+    voted_for_ts = float('inf')
+    request_queue = []
+    sent_inquire_to = None
+    
+    # Estado Solicitante
+    received_votes = set()
+    needed_votes = len(voting_set)
+    has_requested = False
+    is_in_cs = False
+    my_ts = 0
+    req_start_time = 0
+
+    time.sleep(start_delay)
+
+    if active_participant:
+        clock += 1
+        my_ts = clock
+        has_requested = True
+        req_start_time = time.perf_counter()
+        
+        # --- ENVÍO PARALELO (Request) ---
+        time.sleep(NETWORK_DELAY) 
+        for member in voting_set:
+            queues[member].put((REQUEST, my_ts, node_id))
+            # CORRECCIÓN: Solo contamos mensajes de RED (no a uno mismo)
+            if member != node_id:
+                msgs_sent_count += 1
+
+    while True:
+        if active_participant and not has_requested and not is_in_cs and len(received_votes) == 0:
+             stats_queue.put(('DONE', node_id))
+             active_participant = False
+
+        try: msg = my_queue.get(timeout=0.1)
+        except: continue
+        if msg == "STOP": break
+
+        msg_type, src_ts, src_id = msg
+        clock = max(clock, src_ts) + 1
+
+        # --- LÓGICA DE ÁRBITRO ---
+        if msg_type == REQUEST:
+            if voted_for is None:
+                # Conceder Voto
+                voted_for = src_id
+                voted_for_ts = src_ts
+                time.sleep(NETWORK_DELAY)
+                queues[src_id].put((LOCKED, clock, node_id))
+                if src_id != node_id: msgs_sent_count += 1
+            else:
+                heapq.heappush(request_queue, (src_ts, src_id))
+                if use_inquire_optimization: # HEAVY
+                    curr = (voted_for_ts, voted_for)
+                    new = (src_ts, src_id)
+                    if new < curr and sent_inquire_to != voted_for:
+                        time.sleep(NETWORK_DELAY)
+                        queues[voted_for].put((INQUIRE, clock, node_id))
+                        if voted_for != node_id: msgs_sent_count += 1
+                        sent_inquire_to = voted_for
+                    else:
+                        queues[src_id].put((FAILED, clock, node_id)) 
+                        if src_id != node_id: msgs_sent_count += 1
+                else: # LIGHT (Deadlock prone)
+                    pass
+
+        elif msg_type == RELEASE:
+            if src_id == voted_for:
+                voted_for = None
+                voted_for_ts = float('inf')
+                sent_inquire_to = None
+                if request_queue:
+                    next_ts, next_node = heapq.heappop(request_queue)
+                    voted_for = next_node
+                    voted_for_ts = next_ts
+                    time.sleep(NETWORK_DELAY)
+                    queues[next_node].put((LOCKED, clock, node_id))
+                    if next_node != node_id: msgs_sent_count += 1
+
+        elif msg_type == RELINQUISH:
+            if src_id == voted_for:
+                heapq.heappush(request_queue, (voted_for_ts, voted_for))
+                voted_for = None
+                voted_for_ts = float('inf')
+                sent_inquire_to = None
+                if request_queue:
+                    next_ts, next_node = heapq.heappop(request_queue)
+                    voted_for = next_node
+                    voted_for_ts = next_ts
+                    time.sleep(NETWORK_DELAY)
+                    queues[next_node].put((LOCKED, clock, node_id))
+                    if next_node != node_id: msgs_sent_count += 1
+
+        # --- LÓGICA DE SOLICITANTE ---
+        if has_requested:
+            if msg_type == LOCKED:
+                received_votes.add(src_id)
+                if len(received_votes) == needed_votes:
+                    is_in_cs = True
+                    has_requested = False
+                    entry_time = time.perf_counter()
+                    stats_queue.put(('CS_ENTRY', entry_time))
+                    stats_queue.put(('RESPONSE_TIME', entry_time - req_start_time))
+                    
+                    time.sleep(cs_duration)
+                    
+                    exit_time = time.perf_counter()
+                    stats_queue.put(('CS_EXIT', exit_time))
+                    
+                    is_in_cs = False
+                    received_votes.clear()
+                    
+                    # --- RELEASE PARALELO ---
+                    time.sleep(NETWORK_DELAY)
+                    for member in voting_set:
+                        queues[member].put((RELEASE, clock, node_id))
+                        if member != node_id: msgs_sent_count += 1
+            
+            elif msg_type == INQUIRE and use_inquire_optimization:
+                if not is_in_cs and src_id in received_votes:
+                    received_votes.remove(src_id)
+                    time.sleep(NETWORK_DELAY)
+                    queues[src_id].put((RELINQUISH, clock, node_id))
+                    if src_id != node_id: msgs_sent_count += 1
+            
+            elif msg_type == FAILED:
+                pass
+
+    stats_queue.put(('MSG_COUNT', msgs_sent_count))
