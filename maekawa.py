@@ -3,7 +3,7 @@ import time
 import heapq
 from config import REQUEST, LOCKED, RELEASE, FAILED, INQUIRE, RELINQUISH, NETWORK_DELAY
 
-def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_delay, active_participant, use_inquire_optimization):
+def run_maekawa(node_id, voting_set, queues, stats_queue, log_queue, cs_duration, start_delay, active_participant, use_inquire_optimization):
     my_queue = queues[node_id]
     clock = 0
     msgs_sent_count = 0
@@ -36,6 +36,8 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
             queues[member].put((REQUEST, my_ts, node_id))
             if member != node_id:
                 msgs_sent_count += 1
+                # LOG
+                log_queue.put(f"[MK] Node {node_id} -> Node {member}: REQUEST (TS={my_ts})")
 
     while True:
         if active_participant and not has_requested and not is_in_cs and len(received_votes) == 0:
@@ -57,7 +59,9 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                 voted_for_ts = src_ts
                 time.sleep(NETWORK_DELAY)
                 queues[src_id].put((LOCKED, clock, node_id))
-                if src_id != node_id: msgs_sent_count += 1
+                if src_id != node_id:
+                    msgs_sent_count += 1
+                    log_queue.put(f"[MK] Node {node_id} -> Node {src_id}: LOCKED")
             else:
                 heapq.heappush(request_queue, (src_ts, src_id))
                 
@@ -68,12 +72,16 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     if new < curr and sent_inquire_to != voted_for:
                         time.sleep(NETWORK_DELAY)
                         queues[voted_for].put((INQUIRE, clock, node_id))
-                        if voted_for != node_id: msgs_sent_count += 1
+                        if voted_for != node_id:
+                            msgs_sent_count += 1
+                            log_queue.put(f"[MK] Node {node_id} -> Node {voted_for}: INQUIRE")
                         sent_inquire_to = voted_for
                     else:
                         # En Heavy sí enviamos FAILED
                         queues[src_id].put((FAILED, clock, node_id)) 
-                        if src_id != node_id: msgs_sent_count += 1
+                        if src_id != node_id:
+                            msgs_sent_count += 1
+                            log_queue.put(f"[MK] Node {node_id} -> Node {src_id}: FAILED")
                 else: # LIGHT DEMAND
                     pass
 
@@ -88,7 +96,9 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     voted_for_ts = next_ts
                     time.sleep(NETWORK_DELAY)
                     queues[next_node].put((LOCKED, clock, node_id))
-                    if next_node != node_id: msgs_sent_count += 1
+                    if next_node != node_id:
+                        msgs_sent_count += 1
+                        log_queue.put(f"[MK] Node {node_id} -> Node {next_node}: LOCKED (Handoff)")
 
         elif msg_type == RELINQUISH:
             if src_id == voted_for:
@@ -102,7 +112,9 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     voted_for_ts = next_ts
                     time.sleep(NETWORK_DELAY)
                     queues[next_node].put((LOCKED, clock, node_id))
-                    if next_node != node_id: msgs_sent_count += 1
+                    if next_node != node_id:
+                        msgs_sent_count += 1
+                        log_queue.put(f"[MK] Node {node_id} -> Node {next_node}: LOCKED (Post-Relinquish)")
 
         # Lógica del Solicitante
         if has_requested:
@@ -114,11 +126,13 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     entry_time = time.perf_counter()
                     stats_queue.put(('CS_ENTRY', entry_time))
                     stats_queue.put(('RESPONSE_TIME', entry_time - req_start_time))
+                    log_queue.put(f"[MK] Node {node_id} *** ENTERING CS ***")
                     
                     time.sleep(cs_duration)
                     
                     exit_time = time.perf_counter()
                     stats_queue.put(('CS_EXIT', exit_time))
+                    log_queue.put(f"[MK] Node {node_id} *** EXITING CS ***")
                     
                     is_in_cs = False
                     received_votes.clear()
@@ -127,14 +141,18 @@ def run_maekawa(node_id, voting_set, queues, stats_queue, cs_duration, start_del
                     time.sleep(NETWORK_DELAY)
                     for member in voting_set:
                         queues[member].put((RELEASE, clock, node_id))
-                        if member != node_id: msgs_sent_count += 1
+                        if member != node_id:
+                            msgs_sent_count += 1
+                            log_queue.put(f"[MK] Node {node_id} -> Node {member}: RELEASE")
             
             elif msg_type == INQUIRE and use_inquire_optimization:
                 if not is_in_cs and src_id in received_votes:
                     received_votes.remove(src_id)
                     time.sleep(NETWORK_DELAY)
                     queues[src_id].put((RELINQUISH, clock, node_id))
-                    if src_id != node_id: msgs_sent_count += 1
+                    if src_id != node_id:
+                        msgs_sent_count += 1
+                        log_queue.put(f"[MK] Node {node_id} -> Node {src_id}: RELINQUISH")
             
             elif msg_type == FAILED:
                 pass

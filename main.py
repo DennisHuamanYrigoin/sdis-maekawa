@@ -1,3 +1,4 @@
+# main.py
 import multiprocessing
 import time
 import math
@@ -5,6 +6,16 @@ import queue
 from config import generate_maekawa_voting_sets, NETWORK_DELAY
 from ricart_agrawala import run_ricart_agrawala
 from maekawa import run_maekawa
+
+def log_writer(log_queue, filename):
+    """Proceso dedicado a escribir logs en archivo para no bloquear la simulación."""
+    with open(filename, 'w') as f:
+        while True:
+            msg = log_queue.get()
+            if msg == "STOP_LOG":
+                break
+            f.write(msg + '\n')
+            f.flush()
 
 def print_detailed_metrics(algo_name, collected_stats, N, k_active, E):
     total_msgs = 0
@@ -58,7 +69,7 @@ def print_detailed_metrics(algo_name, collected_stats, N, k_active, E):
     print("\n" + "="*70)
     print(f" RESULTADOS MÉTRICAS: {algo_name}")
     print("="*70)
-    print(f"Configuración: N={N}, k={k_active}, E={E}s, S(i) = {2*math.sqrt(N)-1:.2f}")
+    print(f"Configuración: N={N}, k={k_active}, E={E}s")
     print("-" * 70)
     print(f"[1] COMPLEJIDAD DE MENSAJES")
     print(f"    Total Sistema    : {total_msgs} (Teórico: ~{theory_total:.1f})")
@@ -75,6 +86,14 @@ def run_simulation(algo_type, N, k_active, E):
     manager = multiprocessing.Manager()
     queues = [manager.Queue() for _ in range(N)]
     stats_queue = manager.Queue()
+    
+    # --- SISTEMA DE LOGS ---
+    log_queue = manager.Queue()
+    # Limpiamos el nombre para el archivo
+    filename = f"log_{algo_type.replace(' ', '_').replace('(', '').replace(')', '')}.txt"
+    logger_proc = multiprocessing.Process(target=log_writer, args=(log_queue, filename))
+    logger_proc.start()
+    
     collected_stats = []
     active_ids = list(range(k_active))
     processes = []
@@ -82,7 +101,7 @@ def run_simulation(algo_type, N, k_active, E):
     if "Ricart" in algo_type:
         for i in range(N):
             is_active = i in active_ids
-            p = multiprocessing.Process(target=run_ricart_agrawala, args=(i, N, queues, stats_queue, E, 0, is_active))
+            p = multiprocessing.Process(target=run_ricart_agrawala, args=(i, N, queues, stats_queue, log_queue, E, 0, is_active))
             processes.append(p)
             
     elif "Maekawa" in algo_type:
@@ -100,7 +119,7 @@ def run_simulation(algo_type, N, k_active, E):
                     start_delay = 0
                     use_opt = True
 
-            p = multiprocessing.Process(target=run_maekawa, args=(i, voting_sets[i], queues, stats_queue, E, start_delay, is_active, use_opt))
+            p = multiprocessing.Process(target=run_maekawa, args=(i, voting_sets[i], queues, stats_queue, log_queue, E, start_delay, is_active, use_opt))
             processes.append(p)
 
     for p in processes: p.start()
@@ -118,6 +137,7 @@ def run_simulation(algo_type, N, k_active, E):
             if "Light" in algo_type:
                 print(" TIMEOUT ALCANZADO (DEADLOCK)")
                 print(" Maekawa Under Light se bloqueó por espera circular.")
+                log_queue.put("!!! DEADLOCK DETECTADO - TIMEOUT !!!")
             else:
                 print(" ERROR: TIMEOUT ALCANZADO")
             print("!"*60 + "\n")
@@ -132,6 +152,12 @@ def run_simulation(algo_type, N, k_active, E):
         
     for q in queues: q.put("STOP")
     time.sleep(1)
+    
+    # Detener Logger
+    log_queue.put("STOP_LOG")
+    logger_proc.join()
+    print(f"--> Log guardado en: {filename}")
+
     try:
         while not stats_queue.empty(): collected_stats.append(stats_queue.get_nowait())
     except: pass

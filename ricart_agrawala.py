@@ -2,7 +2,7 @@
 import time
 from config import REQUEST, REPLY, NETWORK_DELAY
 
-def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, start_delay, active_participant):
+def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, log_queue, cs_duration, start_delay, active_participant):
     my_queue = queues[node_id]
     clock = 0
     msgs_sent_count = 0
@@ -25,6 +25,8 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
             if i != node_id:
                 queues[i].put((REQUEST, my_ts, node_id))
                 msgs_sent_count += 1
+                # LOG
+                log_queue.put(f"[RA] Node {node_id} -> Node {i}: REQUEST (TS={my_ts})")
 
         requesting = True
         
@@ -41,10 +43,13 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
                 
                 if requesting and (my_priority < other_priority):
                     deferred_nodes.append(src_id)
+                    log_queue.put(f"[RA] Node {node_id}: DEFERRED Request from Node {src_id}")
                 else:
                     time.sleep(NETWORK_DELAY)
                     queues[src_id].put((REPLY, clock, node_id))
                     msgs_sent_count += 1
+                    # LOG
+                    log_queue.put(f"[RA] Node {node_id} -> Node {src_id}: REPLY (TS={clock})")
             
             elif msg_type == REPLY:
                 replies_received += 1
@@ -53,11 +58,13 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
         entry_time = time.perf_counter()
         stats_queue.put(('CS_ENTRY', entry_time))
         stats_queue.put(('RESPONSE_TIME', entry_time - req_start_time))
+        log_queue.put(f"[RA] Node {node_id} *** ENTERING CS ***")
         
         time.sleep(cs_duration)
         
         exit_time = time.perf_counter()
         stats_queue.put(('CS_EXIT', exit_time))
+        log_queue.put(f"[RA] Node {node_id} *** EXITING CS ***")
         
         requesting = False
         
@@ -67,6 +74,8 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
             for target_id in deferred_nodes:
                 queues[target_id].put((REPLY, clock, node_id))
                 msgs_sent_count += 1
+                # LOG
+                log_queue.put(f"[RA] Node {node_id} -> Node {target_id}: REPLY (Deferred)")
             
         stats_queue.put(('DONE', node_id))
 
@@ -80,6 +89,8 @@ def run_ricart_agrawala(node_id, total_nodes, queues, stats_queue, cs_duration, 
                 time.sleep(NETWORK_DELAY)
                 queues[src_id].put((REPLY, clock, node_id))
                 msgs_sent_count += 1
+                # LOG
+                log_queue.put(f"[RA] Node {node_id} -> Node {src_id}: REPLY (Passive)")
         except: pass
 
     stats_queue.put(('MSG_COUNT', msgs_sent_count))
