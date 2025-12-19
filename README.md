@@ -71,7 +71,7 @@ Entre otras, se muestra:
 - **Synchronization delay** aproximado a partir de tiempos de entrada/salida.
 - **Throughput** estimado.
 - Comparación contra valores teóricos:
-  - Ricart–Agrawala: \(2N - 1\) mensajes por entrada.[1]
+  - Ricart–Agrawala: \(2N - 1\) mensajes por entrada.
   - Maekawa Light: aproximación basada en el tamaño promedio del quórum generado.
   - Maekawa Heavy: aproximación basada en el tamaño promedio del quórum generado.
 
